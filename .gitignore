@@ -1,0 +1,16 @@
+backend/venv/
+.tools/
+backend/media/
+backend/staticfiles/
+**/__pycache__/
+*.pyc
+*.sqlite3
+*.sqlite3-journal
+.env
+.env.*
+!.env.example
+bair_app/build/
+bair_app/.dart_tool/
+bair_app/test/failures/
+**/hs_err_pid*.log
+**/java_pid*.hprof
