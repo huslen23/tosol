@@ -1,11 +1,20 @@
 from pathlib import Path
 import os
+import json
+from psycopg.conninfo import conninfo_to_dict
+from django.core.exceptions import ImproperlyConfigured
 
 # ==============================
 # BASE DIR
 # ==============================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+# Local credentials are ignored by Git; deployed servers use environment variables.
+_local_secrets = {}
+if os.environ.get("DJANGO_DEBUG", "true").lower() == "true":
+    _secrets_path = BASE_DIR / ".local-secrets.json"
+    if _secrets_path.exists():
+        _local_secrets = json.loads(_secrets_path.read_text(encoding="utf-8"))
 
 
 # ==============================
@@ -116,7 +125,7 @@ DATABASES = {
         "USER": "postgres",
 
         # PostgreSQL password
-        "PASSWORD": "1234",
+        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", _local_secrets.get("POSTGRES_PASSWORD", "")),
 
         "HOST": "localhost",
 
@@ -211,7 +220,7 @@ MAILERS = {
 
             # Gmail-ийн энгийн password биш.
             # Google App Password байна.
-            "password": "vebc jomj ziso euef",
+            "password": os.environ.get("EMAIL_HOST_PASSWORD", _local_secrets.get("EMAIL_HOST_PASSWORD", "")),
 
             "timeout": 10,
         },
@@ -273,3 +282,50 @@ if os.environ.get("EMAIL_HOST_USER"):
 if os.environ.get("EMAIL_HOST_PASSWORD"):
     MAILERS["default"]["OPTIONS"]["password"] = os.environ["EMAIL_HOST_PASSWORD"]
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", DEFAULT_FROM_EMAIL)
+
+# Neon and other hosted PostgreSQL services provide a standard connection URL.
+if os.environ.get("DATABASE_URL"):
+    _connection = conninfo_to_dict(os.environ["DATABASE_URL"])
+    _database = {"ENGINE": "django.db.backends.postgresql", "CONN_MAX_AGE": 0}
+    for _parameter, _field in [("dbname", "NAME"), ("user", "USER"), ("password", "PASSWORD"), ("host", "HOST"), ("port", "PORT")]:
+        _database[_field] = _connection.pop(_parameter, "")
+    _connection.setdefault("sslmode", "require")
+    _connection.setdefault("connect_timeout", "10")
+    _database["OPTIONS"] = _connection
+    DATABASES["default"] = _database
+elif os.environ.get("POSTGRES_SSLMODE"):
+    DATABASES["default"]["OPTIONS"] = {"sslmode": os.environ["POSTGRES_SSLMODE"]}
+
+if not DEBUG and SECRET_KEY == "django-insecure-change-this-secret-key":
+    raise ImproperlyConfigured("Set DJANGO_SECRET_KEY before starting production.")
+
+# Production static assets are served by WhiteNoise; media lives in Cloudinary.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+if os.environ.get("CLOUDINARY_URL"):
+    INSTALLED_APPS += ["cloudinary_storage", "cloudinary"]
+    STORAGES["default"] = {"BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage"}
+
+if not DEBUG:
+    if not os.environ.get("DATABASE_URL"):
+        raise ImproperlyConfigured("Set DATABASE_URL for production.")
+    if not os.environ.get("CLOUDINARY_URL"):
+        raise ImproperlyConfigured("Set CLOUDINARY_URL for persistent production images.")
+    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
+    STORAGES["staticfiles"] = {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"}
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 3600
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = False
+    CORS_ALLOW_ALL_ORIGINS = False
+
+CORS_ALLOWED_ORIGINS = [v.strip() for v in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if v.strip()]
+CSRF_TRUSTED_ORIGINS = [v.strip() for v in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if v.strip()]
+if os.environ.get("RENDER_EXTERNAL_HOSTNAME"):
+    ALLOWED_HOSTS.append(os.environ["RENDER_EXTERNAL_HOSTNAME"])
+    CSRF_TRUSTED_ORIGINS.append("https://" + os.environ["RENDER_EXTERNAL_HOSTNAME"])

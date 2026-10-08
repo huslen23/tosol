@@ -13,6 +13,7 @@ from core.marketplace import PropertyViewSet, profile, logout
 from core.passwords import change_password, forgot_password, reset_password
 from django.conf import settings
 from django.conf.urls.static import static
+from .health import health
 
 router = DefaultRouter()
 from core.discovery import DistrictViewSet, ComplexViewSet
@@ -22,6 +23,7 @@ router.register(r"properties", PropertyViewSet, basename="property")
 
 
 urlpatterns = [
+    path("health/", health),
     path("admin/", admin.site.urls),
 
     path("api/", include(router.urls)),
